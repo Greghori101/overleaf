@@ -7,6 +7,7 @@ import FeaturesHelper from './FeaturesHelper.mjs'
  * @typedef {InstanceType<typeof import('../../models/Subscription.mjs').Subscription>} MongoSubscription
  * @typedef {import('../../../../types/subscription/plan').Plan} Plan
  * @typedef {import('../../../../modules/subscriptions/app/src/PaymentService.mjs').PaymentRecord} PaymentRecord
+ * @typedef {import('../../../../types/user-email').UserEmailData} UserEmailData
  */
 
 /**
@@ -33,13 +34,13 @@ const INACTIVE_NEXT_RENEWAL_DATE_STATES = new Set([
 const PENDING_CANCELLATION_STATES = new Set(['canceled', 'cancelled'])
 
 /**
- * @param {MongoSubscription} subscription
+ * @param {Nullable<MongoSubscription>} [subscription]
  * @returns {string}
  */
 function getSubscriptionState(subscription) {
   return (
-    subscription.recurlyStatus?.state ||
-    subscription.paymentProvider?.state ||
+    subscription?.recurlyStatus?.state ||
+    subscription?.paymentProvider?.state ||
     ''
   )
 }
@@ -513,6 +514,56 @@ function shouldUseCommonsBestSubscription(
 }
 
 /**
+ * Determine the user's role in any group subscription they participate in.
+ *
+ * @param {MongoSubscription[]} memberGroupSubscriptions
+ * @param {MongoSubscription[]} managedGroupSubscriptions
+ * @param {string|object} userId
+ * @returns {''|'admin'|'manager'|'member'}
+ */
+function getGroupRole(
+  memberGroupSubscriptions = [],
+  managedGroupSubscriptions = [],
+  userId
+) {
+  if (
+    managedGroupSubscriptions.length === 0 &&
+    memberGroupSubscriptions.length === 0
+  ) {
+    return ''
+  }
+  const userIdStr = userId.toString()
+  const isAdmin = managedGroupSubscriptions.some(
+    sub => sub.admin_id?._id?.toString() === userIdStr
+  )
+  if (isAdmin) return 'admin'
+  if (managedGroupSubscriptions.length > 0) return 'manager'
+  return 'member'
+}
+
+/**
+ * Customer.io properties derived from a user's institutional affiliations.
+ *
+ * @param {UserEmailData[]} userEmails - email data from UserGetter.getUserFullEmails
+ * @returns {{ enterprise_commons: boolean, domain_capture: boolean }}
+ */
+function getAffiliationProperties(userEmails) {
+  const enterpriseCommons = userEmails.some(
+    emailData =>
+      emailData.emailHasInstitutionLicence &&
+      emailData.affiliation?.institution?.commonsAccount &&
+      emailData.affiliation?.institution?.enterpriseCommons
+  )
+  const domainCapture = userEmails.some(
+    emailData => emailData.affiliation?.group?.domainCaptureEnabled
+  )
+  return {
+    enterprise_commons: enterpriseCommons,
+    domain_capture: domainCapture,
+  }
+}
+
+/**
  * Compute plan-related user properties for sending to customer.io.
  *
  * @param {object} options
@@ -525,6 +576,7 @@ function shouldUseCommonsBestSubscription(
  * @param {boolean} options.hasCommons
  * @param {Nullable<{ isPremium?: boolean }>} [options.writefullData]
  * @param {Map<string, boolean>} [options.aiBlockedByPolicyId]
+ * @param {string|object} options.userId
  */
 function getPlanProperties({
   bestSubscription,
@@ -536,6 +588,7 @@ function getPlanProperties({
   hasCommons,
   writefullData,
   aiBlockedByPolicyId,
+  userId,
 }) {
   const planType = normalizePlanType(bestSubscription)
   const displayPlanType = getFriendlyPlanName(planType)
@@ -581,10 +634,16 @@ function getPlanProperties({
   const properties = {
     ai_plan: aiPlan,
     group: userIsMemberOfGroupSubscription,
+    group_role: getGroupRole(
+      memberGroupSubscriptions,
+      managedGroupSubscriptions,
+      userId
+    ),
     commons: Boolean(hasCommons),
     individual_subscription: Boolean(
       individualSubscription && !individualSubscription.groupPlan
     ),
+    past_due: getSubscriptionState(individualSubscription) === 'past_due',
   }
 
   if (trialEndDate != null) properties.trial_end_date = trialEndDate
@@ -619,5 +678,7 @@ export default {
   getAiPlanCadence,
   hasPlanAiEnabled,
   shouldUseCommonsBestSubscription,
+  getGroupRole,
   getPlanProperties,
+  getAffiliationProperties,
 }

@@ -13,7 +13,11 @@ import { InvalidZipFileError } from './ArchiveErrors.mjs'
 import multer from 'multer'
 import lodash from 'lodash'
 import { expressify } from '@overleaf/promise-utils'
-import { DuplicateNameError, FileTooLargeError } from '../Errors/Errors.js'
+import {
+  DuplicateNameError,
+  FileTooLargeError,
+  DocumentConversionError,
+} from '../Errors/Errors.js'
 import DocumentConversionManager from './DocumentConversionManager.mjs'
 import ProjectOptionsHandler from '../Project/ProjectOptionsHandler.mjs'
 import AnalyticsManager from '../Analytics/AnalyticsManager.mjs'
@@ -184,7 +188,10 @@ async function importDocument(req, res, next) {
   const { path } = req.file
   const conversionType = req.query.type
   if (!['docx', 'markdown'].includes(conversionType)) {
-    return res.status(400).json({ success: false, error: 'invalid_type' })
+    return res.status(400).json({
+      success: false,
+      error: req.i18n.translate('invalid_import_type'),
+    })
   }
   const name = Path.basename(req.body.name, Path.extname(req.body.name))
   logger.debug({ path, userId, conversionType }, 'importing document file')
@@ -203,16 +210,12 @@ async function importDocument(req, res, next) {
           archivePath
         )
       await ProjectOptionsHandler.promises.setCompiler(project._id, 'lualatex')
-      AnalyticsManager.recordEventForUserInBackground(
-        userId,
-        'convert-format',
-        {
-          sourceFormat: conversionType,
-          targetFormat: 'latex',
-          status: 'success',
-          operation: 'import',
-        }
-      )
+      AnalyticsManager.recordEventForSession(req.session, 'convert-format', {
+        sourceFormat: conversionType,
+        targetFormat: 'latex',
+        status: 'success',
+        operation: 'import',
+      })
       res.json({ success: true, project_id: project._id })
     } finally {
       await fsPromises.unlink(archivePath).catch(unlinkErr => {
@@ -223,8 +226,7 @@ async function importDocument(req, res, next) {
       })
     }
   } catch (error) {
-    logger.error({ error }, 'error importing document file')
-    AnalyticsManager.recordEventForUserInBackground(userId, 'convert-format', {
+    AnalyticsManager.recordEventForSession(req.session, 'convert-format', {
       sourceFormat: conversionType,
       targetFormat: 'latex',
       status: 'failure',
@@ -236,9 +238,16 @@ async function importDocument(req, res, next) {
     ) {
       return res.status(422).json({
         success: false,
-        error: 'file_too_large',
+        error: req.i18n.translate('file_too_large'),
       })
     }
+    if (error instanceof DocumentConversionError) {
+      return res.status(422).json({
+        success: false,
+        error: error.message || req.i18n.translate('upload_failed'),
+      })
+    }
+    logger.error({ error, userId }, 'unhandled error while importing document')
     res.status(500).json({
       success: false,
       error: req.i18n.translate('upload_failed'),

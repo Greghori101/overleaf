@@ -87,16 +87,14 @@ function getDoubleCompilePercentile(projectId) {
 }
 
 function getNewCompileBackendClass(projectId, compileBackendClass) {
+  const clsi = Settings.apis.clsi
   let cfg
-  switch (compileBackendClass) {
-    case 'c3d':
-      cfg = Settings.apis.clsi_new.doubleCompileFree
-      break
-    case 'c4d':
-      cfg = Settings.apis.clsi_new.doubleCompilePremium
-      break
-    default:
-      throw new Error('unknown ?compileBackendClass')
+  if (compileBackendClass === clsi.standardCompileBackendClass) {
+    cfg = Settings.apis.clsi_new.doubleCompileFree
+  } else if (compileBackendClass === clsi.priorityCompileBackendClass) {
+    cfg = Settings.apis.clsi_new.doubleCompilePremium
+  } else {
+    throw new Error('unknown ?compileBackendClass')
   }
   if (!cfg.backendClass || !cfg.sample) return null
   if (getDoubleCompilePercentile(projectId) >= cfg.sample) return null
@@ -334,6 +332,7 @@ async function _sendBuiltRequest(projectId, userId, req, options) {
     outputUrlPrefix: compile.outputUrlPrefix,
     clsiCacheShard: compile.clsiCacheShard,
     baseHistoryVersion: compile.baseHistoryVersion,
+    instanceType: compile.instanceType,
   }
 }
 
@@ -617,7 +616,7 @@ async function _makeNewBackendRequest(
     response,
     body: json,
     newCompileBackendClass,
-    newClsiServerId: clsiServerId || newClsiServerId,
+    newClsiServerId: newClsiServerId || clsiServerId,
   }
 }
 
@@ -1160,6 +1159,7 @@ function _finaliseRequest(projectId, options, project, docs, files) {
         enablePdfCaching:
           (Settings.enablePdfCaching && options.enablePdfCaching) || false,
         pdfCachingMinChunkSize: options.pdfCachingMinChunkSize,
+        enableCheckpoint: Boolean(options.enableCheckpoint),
         flags,
         metricsMethod: options.compileGroup,
         metricsPath: options.metricsPath,
@@ -1174,19 +1174,14 @@ function _finaliseRequest(projectId, options, project, docs, files) {
   }
 }
 
-async function buildDocumentConversionRequest(projectId) {
-  const project = await ProjectGetter.promises.getProject(projectId, {
-    compiler: 1,
-    imageName: 1,
-    'overleaf.history.id': 1,
-    rootDoc_id: 1,
-    rootFolder: 1,
+async function buildDocumentConversionRequest(projectId, userId, options) {
+  return await _buildRequest(projectId, userId, {
+    ...options,
+    // Use the history snapshot as populated on clsi-cache.
+    populateClsiCache: true,
+    // Read from mongo directly, skip redis.
+    incrementalCompilesEnabled: false,
   })
-  if (project == null) {
-    throw new Errors.NotFoundError(`project does not exist: ${projectId}`)
-  }
-  const projectStateHash = ClsiStateManager.computeHash(project, {})
-  return _buildRequestFromMongo(projectId, {}, project, projectStateHash)
 }
 
 async function wordCount(projectId, userId, file, limits, clsiserverid) {
@@ -1292,6 +1287,7 @@ export default {
     'outputUrlPrefix',
     'buildId',
     'clsiCacheShard',
+    'instanceType',
   ]),
   sendExternalRequest: callbackifyMultiResult(sendExternalRequest, [
     'status',

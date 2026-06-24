@@ -131,6 +131,7 @@ async function createSplitTest(
     labsTitle: labsInfo.title,
     labsDescription: labsInfo.description,
     labsIcon: labsInfo.icon,
+    labsSuccessNotification: labsInfo.successNotification,
     versions: [
       {
         versionNumber: 1,
@@ -205,6 +206,7 @@ async function updateSplitTestInfo(name, info, labsInfo) {
     splitTest.labsTitle = labsInfo.title
     splitTest.labsDescription = labsInfo.description
     splitTest.labsIcon = labsInfo.icon
+    splitTest.labsSuccessNotification = labsInfo.successNotification
   }
   return _saveSplitTest(splitTest)
 }
@@ -327,6 +329,17 @@ async function switchToNextPhase(
         name,
       }
     )
+  }
+
+  // Labs phase requires labs config to be set
+  if (lastVersionCopy.phase === LABS_PHASE) {
+    if (!splitTest.labsTitle || !splitTest.labsDescription) {
+      // Cannot be a required fields as we do not always promote to labs
+      throw new Errors.InvalidError(
+        'Labs phase requires Labs Title and Labs Description to be set',
+        { name }
+      )
+    }
   }
 
   // Labs phase requires exactly one variant

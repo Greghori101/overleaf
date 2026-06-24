@@ -36,6 +36,8 @@ import type {
   SettingsSection,
   SettingsSectionHook,
 } from '@/features/settings/context/types'
+import EditorTabsSetting from '../components/editor-settings/editor-tabs-setting'
+import FloatingMenuSetting from '../components/editor-settings/floating-menu-setting'
 
 const [referenceSearchSettingModule] = importOverleafModules(
   'referenceSearchSetting'
@@ -47,6 +49,11 @@ const editorTabExtraSectionHooks: SettingsSectionHook[] = importOverleafModules(
 )
   .map((m: any) => m?.import?.default)
   .filter((h: unknown): h is SettingsSectionHook => typeof h === 'function')
+
+const spellcheckExtraSectionHooks: SettingsSectionHook[] =
+  importOverleafModules('settingsModalSpellcheckSections')
+    .map((m: any) => m?.import?.default)
+    .filter((h: unknown): h is SettingsSectionHook => typeof h === 'function')
 
 const useSlotSections = (hooks: SettingsSectionHook[]): SettingsSection[] =>
   hooks.map(hook => hook()).filter((s): s is SettingsSection => s != null)
@@ -69,15 +76,17 @@ export const SettingsModalProvider: FC<React.PropsWithChildren> = ({
 }) => {
   const { t } = useTranslation()
   const { isOverleaf } = getMeta('ol-ExposedSettings')
-  const { overallTheme } = useProjectSettingsContext()
+  const { overallTheme, floatingMenu } = useProjectSettingsContext()
 
   // TODO ide-redesign-cleanup: Rename this field and move it directly into this context
   const { leftMenuShown, setLeftMenuShown } = useLayoutContext()
 
   const hasEmailNotifications = useFeatureFlag('email-notifications')
   const hasEditorTabs = useFeatureFlag('editor-tabs')
+  const hasToolbarMigration = useFeatureFlag('writefull-toolbar-migration')
 
   const editorTabExtraSections = useSlotSections(editorTabExtraSectionHooks)
+  const spellcheckExtraSections = useSlotSections(spellcheckExtraSectionHooks)
 
   const allSettingsTabs: SettingsEntry[] = useMemo(
     () => [
@@ -106,6 +115,11 @@ export const SettingsModalProvider: FC<React.PropsWithChildren> = ({
                 component: <CodeCheckSetting />,
               },
               {
+                key: 'editorTabs',
+                component: <EditorTabsSetting />,
+                hidden: !hasEditorTabs,
+              },
+              {
                 key: 'previewTabs',
                 component: <PreviewTabsSetting />,
                 hidden: !hasEditorTabs,
@@ -123,19 +137,10 @@ export const SettingsModalProvider: FC<React.PropsWithChildren> = ({
                 component: <ReferenceSearchSetting />,
                 hidden: !ReferenceSearchSetting,
               },
-            ],
-          },
-          {
-            key: 'spellcheck',
-            title: t('spellcheck'),
-            settings: [
               {
-                key: 'spellCheckLanguage',
-                component: <SpellCheckSetting />,
-              },
-              {
-                key: 'dictionary-settings',
-                component: <DictionarySetting />,
+                key: 'floating-menu',
+                component: <FloatingMenuSetting />,
+                hidden: !hasToolbarMigration && floatingMenu,
               },
             ],
           },
@@ -154,6 +159,28 @@ export const SettingsModalProvider: FC<React.PropsWithChildren> = ({
             ],
           },
           ...editorTabExtraSections,
+        ],
+      },
+      {
+        key: 'spelling_and_language',
+        title: t('spelling_and_language'),
+        icon: 'spellcheck',
+        sections: [
+          {
+            key: 'spellcheck',
+            title: t('spellcheck'),
+            settings: [
+              {
+                key: 'spellCheckLanguage',
+                component: <SpellCheckSetting />,
+              },
+              {
+                key: 'dictionary-settings',
+                component: <DictionarySetting />,
+              },
+            ],
+          },
+          ...spellcheckExtraSections,
         ],
       },
       {
@@ -269,6 +296,9 @@ export const SettingsModalProvider: FC<React.PropsWithChildren> = ({
       hasEmailNotifications,
       isOverleaf,
       editorTabExtraSections,
+      spellcheckExtraSections,
+      hasToolbarMigration,
+      floatingMenu,
     ]
   )
 

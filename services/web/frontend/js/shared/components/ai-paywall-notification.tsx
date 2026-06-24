@@ -1,22 +1,29 @@
+import { useEffect } from 'react'
 import Notification from '@/shared/components/notification'
-import UpgradeButton from '@/features/ide-react/components/toolbar/upgrade-button'
+import PaywallUpgradeButton from '@/shared/components/paywall-upgrade-button'
 import { useEditorContext } from '@/shared/context/editor-context'
 import { useUserFeaturesContext } from '@/shared/context/user-features-context'
+import { useEditorAnalytics } from '@/shared/hooks/use-editor-analytics'
 import { useTranslation } from 'react-i18next'
 import { formatSecondsToHoursAndMinutes } from '@/shared/utils/time'
-import { useFeatureFlag } from '@/shared/context/split-test-context'
 
 import getMeta from '@/utils/meta'
 const hasUnlimitedAi = getMeta('ol-hasUnlimitedAi')
 
-type aiFeatureLocations = 'errorAssist' | 'workbench'
+type AiFeatureLocations = 'errorAssist' | 'workbench'
+type PaywallType = 'assistant' | 'workbench'
+
+const paywallTypeByLocation: Record<AiFeatureLocations, PaywallType> = {
+  workbench: 'workbench',
+  errorAssist: 'assistant',
+}
 
 function AiPaywallNotification({
   isActionBelowContent = false,
   featureLocation,
 }: {
   isActionBelowContent?: boolean
-  featureLocation: aiFeatureLocations
+  featureLocation: AiFeatureLocations
 }) {
   const {
     hasSuggestionsLeft,
@@ -25,9 +32,7 @@ function AiPaywallNotification({
     premiumSuggestionResetDate,
   } = useEditorContext()
 
-  const { t } = useTranslation()
   const features = useUserFeaturesContext()
-  const inQuotaRollout = useFeatureFlag('plans-2026-phase-1')
   const user = getMeta('ol-user')
 
   const isCommons = user.hasInstitutionLicence
@@ -69,34 +74,6 @@ function AiPaywallNotification({
     return null
   }
 
-  // if not in rollout, use old paywalls for free users
-  if (!inQuotaRollout && !hasAddOn) {
-    return null
-  }
-
-  if (!inQuotaRollout) {
-    // if not in rollout, we can still use our fair usage messages
-    const chattingMessage = t(
-      'youve_reached_the_fair_usage_limit_on_your_plan_you_can_start_chatting_again_in_time',
-      {
-        time: formatSecondsToHoursAndMinutes(t, secondsTillReset),
-      }
-    )
-    const assistMessage = t('youve_reached_the_fair_usage')
-    return (
-      <Notification
-        type="info"
-        title={t('usage_limit_reached')}
-        content={
-          featureLocation === 'workbench' ? chattingMessage : assistMessage
-        }
-        isDismissible={false}
-        customIcon={null}
-        className="ai-paywall-notification"
-      />
-    )
-  }
-
   if (hasAddOn) {
     return (
       <FairUseLimit
@@ -123,29 +100,12 @@ function AiPaywallNotification({
       />
     )
   }
-
-  const message = t('upgrade_for_unlimited_access_to_ai', {
-    time: formatSecondsToHoursAndMinutes(t, secondsTillReset),
-  })
   return (
-    <>
-      <Notification
-        type="info"
-        title={t('youve_hit_your_daily_ai_limit')}
-        content={message}
-        isDismissible={false}
-        customIcon={null}
-        isActionBelowContent={isActionBelowContent}
-        action={
-          <UpgradeButton
-            className="px-2.5 py-2"
-            referrer="ai"
-            source={featureLocation}
-          />
-        }
-        className="ai-upgrade-paywall-btn ai-paywall-notification"
-      />
-    </>
+    <UpgradePaywall
+      secondsTillReset={secondsTillReset}
+      isActionBelowContent={isActionBelowContent}
+      featureLocation={featureLocation}
+    />
   )
 }
 
@@ -154,7 +114,7 @@ function GroupsPaywall({
   featureLocation,
 }: {
   secondsTillReset: number
-  featureLocation: aiFeatureLocations
+  featureLocation: AiFeatureLocations
 }) {
   const { t } = useTranslation()
 
@@ -186,7 +146,7 @@ function CommonsPaywall({
   featureLocation,
 }: {
   secondsTillReset: number
-  featureLocation: aiFeatureLocations
+  featureLocation: AiFeatureLocations
 }) {
   const { t } = useTranslation()
 
@@ -218,7 +178,7 @@ function FairUseLimit({
   featureLocation,
 }: {
   secondsTillReset: number
-  featureLocation: aiFeatureLocations
+  featureLocation: AiFeatureLocations
 }) {
   const { t } = useTranslation()
 
@@ -251,6 +211,47 @@ function FairUseLimit({
         className="ai-paywall-notification"
       />
     </>
+  )
+}
+
+function UpgradePaywall({
+  secondsTillReset,
+  isActionBelowContent,
+  featureLocation,
+}: {
+  secondsTillReset: number
+  isActionBelowContent: boolean
+  featureLocation: AiFeatureLocations
+}) {
+  const { t } = useTranslation()
+  const { sendEvent } = useEditorAnalytics()
+  const paywallType = paywallTypeByLocation[featureLocation]
+
+  useEffect(() => {
+    sendEvent('paywall-prompt', {
+      'paywall-type': paywallType,
+    })
+  }, [sendEvent, paywallType])
+
+  return (
+    <Notification
+      type="info"
+      title={t('youve_hit_your_daily_ai_limit')}
+      content={t('upgrade_for_unlimited_access_to_ai', {
+        time: formatSecondsToHoursAndMinutes(t, secondsTillReset),
+      })}
+      isDismissible={false}
+      customIcon={null}
+      isActionBelowContent={isActionBelowContent}
+      action={
+        <PaywallUpgradeButton
+          referrer="ai"
+          paywallType={paywallType}
+          className="px-2.5 py-2"
+        />
+      }
+      className="ai-upgrade-paywall-btn ai-paywall-notification"
+    />
   )
 }
 

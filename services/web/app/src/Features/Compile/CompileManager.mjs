@@ -7,7 +7,7 @@ import UserGetter from '../User/UserGetter.mjs'
 import ClsiManager from './ClsiManager.mjs'
 import Metrics from '@overleaf/metrics'
 import { RateLimiter } from '../../infrastructure/RateLimiter.mjs'
-import UserAnalyticsIdCache from '../Analytics/UserAnalyticsIdCache.mjs'
+import UserAnalyticsDataCache from '../Analytics/UserAnalyticsDataCache.mjs'
 import { callbackify, callbackifyMultiResult } from '@overleaf/promise-utils'
 let CompileManager
 const rclient = RedisWrapper.client('clsi_recently_compiled')
@@ -48,7 +48,20 @@ async function compile(projectId, userId, options = {}) {
     return { status: 'autocompile-backoff', outputFiles: [] }
   }
 
-  await ProjectRootDocManager.promises.ensureRootDocumentIsSet(projectId)
+  if (!options.rootResourcePath) {
+    const result =
+      await ProjectRootDocManager.promises.ensureRootDocumentIsValid(projectId)
+    if (result) {
+      options.rootDoc_id = result.rootDocId
+      options.rootResourcePath = result.rootResourcePath.replace(/^\//, '')
+    } else {
+      return {
+        status: 'validation-problems',
+        validationProblems: { mainFile: 'no main file specified' },
+        outputFiles: [],
+      }
+    }
+  }
 
   const limits =
     await CompileManager.promises.getProjectCompileLimits(projectId)
@@ -85,6 +98,7 @@ async function compile(projectId, userId, options = {}) {
     buildId,
     clsiCacheShard,
     baseHistoryVersion,
+    instanceType,
   } = await ClsiManager.promises.sendRequest(projectId, compileAsUser, options)
 
   return {
@@ -99,6 +113,7 @@ async function compile(projectId, userId, options = {}) {
     buildId,
     clsiCacheShard,
     baseHistoryVersion,
+    instanceType,
   }
 }
 
@@ -138,7 +153,7 @@ async function _getUserCompileLimits(userId) {
     ownerFeatures.compileGroup = 'alpha'
   }
 
-  const analyticsId = await UserAnalyticsIdCache.getWithMetrics(
+  const analyticsId = await UserAnalyticsDataCache.getAnalyticsId(
     owner._id,
     '_getUserCompileLimits'
   )
@@ -149,7 +164,10 @@ async function _getUserCompileLimits(userId) {
     timeout:
       ownerFeatures.compileTimeout || Settings.defaultFeatures.compileTimeout,
     compileGroup,
-    compileBackendClass: compileGroup === 'standard' ? 'c3d' : 'c4d',
+    compileBackendClass:
+      compileGroup === 'standard'
+        ? Settings.apis.clsi.standardCompileBackendClass
+        : Settings.apis.clsi.priorityCompileBackendClass,
     ownerAnalyticsId: analyticsId,
   }
 
@@ -230,6 +248,7 @@ export default CompileManager = {
     'outputUrlPrefix',
     'buildId',
     'clsiCacheShard',
+    'instanceType',
   ]),
 
   stopCompile: callbackify(stopCompile),
